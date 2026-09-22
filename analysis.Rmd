@@ -1,0 +1,189 @@
+---
+title: "Predikcija skupih nekretnina za izdavanje"
+subtitle: "Naive Bayes klasifikacija sa optimizacijom praga odluke preko ROC krive"
+author: "Bogdan Stojiljković"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center")
+source(here::here("R", "utils.R"))
+source(here::here("R", "01_data_cleaning.R"))
+source(here::here("R", "02_eda.R"))
+source(here::here("R", "03_modeling.R"))
+```
+
+## Uvod
+
+Ovaj projekat je vežba klasifikacije na `rent.csv` skupu podataka
+([Kaggle: House Rent Prediction Dataset](https://www.kaggle.com/datasets/iamsouravbanerjee/house-rent-prediction-dataset)) —
+oglasi za izdavanje stanova u šest indijskih gradova. Cilj je binarna
+klasifikacija: da li konkretna nekretnina, na osnovu svojih karakteristika
+(grad, površina, broj soba i kupatila, opremljenost, preferirani zakupac,
+tip kontakta), spada u gornjih 15% po ceni kirije na tom tržištu ("high
+rent") ili ne.
+
+Fokus projekta je metodološki — kompletan tok od čišćenja podataka, preko
+Naive Bayes klasifikacije sa diskretizacijom numeričkih promenljivih, do
+ROC analize i optimizacije praga odluke prema Youden-ovom kriterijumu.
+Isti pristup (klasifikacija "premium" segmenta na osnovu strukturnih
+karakteristika, bez oslanjanja na tačnu cenu) bi realno mogao poslužiti
+platformi za izdavanje nekretnina za automatsko tagovanje oglasa ili kao
+signal za proveru oglasa čija cena ne odgovara očekivanjima za date
+karakteristike.
+
+## Podaci i čišćenje
+
+```{r load-clean}
+data <- load_and_clean_rent_data(here::here("data", "rent.csv"))
+str(data)
+```
+
+Originalni skup ima 4746 oglasa. Nakon uklanjanja redova sa nedostajućom
+vrednošću `Rent` (koja se koristi za kreiranje izlazne promenljive, pa se
+ne imputira), ostaje `r nrow(data)` opservacija. Izlazna promenljiva
+`High_Rent` je definisana kao `yes` za kirije iznad 85. percentila:
+
+```{r target-distribution}
+table(data$High_Rent)
+prop.table(table(data$High_Rent))
+```
+
+Klasa `yes` čini oko 15% podataka — ovo je namerno neuravnotežen problem, i
+to je glavni razlog zašto se kasnije posebno razmatra prag odluke umesto
+podrazumevanog 0.5.
+
+Tri promenljive (`Posted.On`, `Floor`, `Area.Locality`) su uklonjene jer
+imaju previše različitih vrednosti da bi bile korisne kao kategorički
+prediktori (81, 480 i 2234 nivoa). Nedostajuće vrednosti za `City` (moda) i
+`Size` (medijana, jer Shapiro-Wilk test odbacuje normalnost) su
+imputirane.
+
+## Eksplorativna analiza
+
+Za svaku preostalu promenljivu proverena je da li postoji vidljiva razlika
+u raspodeli između `high rent` i `low rent` nekretnina — to je i osnova za
+odluku da se sve promenljive zadrže u modelu.
+
+```{r eda, fig.width=7, fig.height=4.5}
+plots <- generate_eda_plots(data)
+save_eda_plots(plots, here::here("figures"))
+
+plots$city
+plots$size
+plots$bhk
+```
+
+Grad je posebno izražen prediktor — dok u pet od šest gradova skupe
+nekretnine čine ispod 12% oglasa, u Mumbaiju je taj udeo blizu 50%. Veća
+površina i veći broj soba takođe jasno pomeraju verovatnoću ka "high
+rent" klasi. (Ostali grafici — broj kupatila, opremljenost, preferirani
+zakupac, tip kontakta — sačuvani su u `figures/` folderu.)
+
+## Priprema za Naive Bayes
+
+Naive Bayes u ovoj implementaciji tretira numeričke prediktore kao
+kontinuirane (pod pretpostavkom normalne raspodele) ili kao diskretne
+kategorije. Pošto `BHK`, `Size` i `Bathroom` nemaju normalnu raspodelu,
+diskretizovane su na intervale jednake frekvencije (2, 5 i 2 intervala
+redom — manji broj za `BHK`/`Bathroom` jer imaju malo različitih
+celobrojnih vrednosti).
+
+```{r split-prepare}
+split <- split_train_test(data, p = 0.8, seed = 1010)
+train <- prepare_for_naive_bayes(split$train)
+test  <- prepare_for_naive_bayes(split$test)
+
+str(train)
+```
+
+## Model i osnovna evaluacija
+
+```{r train-model}
+model <- train_naive_bayes(train)
+
+pred_default <- predict_with_threshold(model, test, threshold = 0.5)
+cm_default <- table(true = test$High_Rent, predicted = pred_default)
+cm_default
+
+metrics_default <- get_evaluation_metrics(cm_default)
+round(metrics_default, 3)
+```
+
+Sa podrazumevanim pragom od 0.5, model ima visok **precision**
+(`r round(metrics_default["Precision"], 3)`) ali osetno niži **recall**
+(`r round(metrics_default["Recall"], 3)`) — kada model kaže da je
+nekretnina skupa, gotovo uvek je u pravu, ali propušta znatan broj
+stvarno skupih nekretnina jer je klasa manjinska.
+
+## ROC kriva i optimizacija praga
+
+```{r roc}
+roc_obj <- compute_roc(model, test)
+plot.roc(roc_obj, print.auc = TRUE, main = "ROC kriva - High_Rent klasifikacija")
+
+auc_value <- as.numeric(roc_obj$auc)
+```
+
+AUC vrednost je `r round(auc_value, 3)`, što se smatra veoma dobrim
+rezultatom (AUC > 0.9). To znači da model, nezavisno od izabranog praga,
+vrlo dobro razdvaja skupe od jeftinijih nekretnina — pitanje je samo gde
+postaviti granicu.
+
+Youden-ov kriterijum bira prag koji maksimizuje zbir specificity i
+sensitivity:
+
+```{r threshold-tuning}
+best_threshold <- find_youden_threshold(roc_obj)
+best_threshold
+
+pred_tuned <- predict_with_threshold(model, test, threshold = best_threshold)
+cm_tuned <- table(true = test$High_Rent, predicted = pred_tuned)
+cm_tuned
+
+metrics_tuned <- get_evaluation_metrics(cm_tuned)
+round(metrics_tuned, 3)
+```
+
+## Poređenje: podrazumevani vs. optimizovani prag
+
+```{r comparison}
+comparison <- data.frame(
+  rbind(metrics_default, metrics_tuned),
+  row.names = c("threshold = 0.5", paste0("threshold = ", round(best_threshold, 3)))
+)
+round(comparison, 3)
+```
+
+Ovo je i suština priče projekta: pomeranjem praga sa 0.5 na
+`r round(best_threshold, 3)`, recall skače sa
+`r round(metrics_default["Recall"]*100, 1)`% na
+`r round(metrics_tuned["Recall"]*100, 1)`%, ali precision pada sa
+`r round(metrics_default["Precision"]*100, 1)`% na
+`r round(metrics_tuned["Precision"]*100, 1)`%. Koji prag je "bolji"
+zavisi od primene:
+
+- ako je cilj **ne propustiti nijedan potencijalno skup oglas** (npr. za
+  ručnu proveru ili prioritetno oglašavanje), prag treba pomeriti ka
+  nižim vrednostima — veći recall, manje precision;
+- ako je cilj **filter u kome se korisniku pokazuje samo ono za šta smo
+  sigurni da je premium segment**, podrazumevani prag je bolji izbor —
+  veći precision.
+
+## Zaključak i ograničenja
+
+Model postiže visok AUC (`r round(auc_value, 3)`) i jasno pokazuje da
+struktura nekretnine (pre svega grad, površina i broj soba) nosi dovoljno
+informacije da se predvidi cenovni segment bez poznavanja tačne cene.
+Prag od 85. percentila za definisanje "high rent" klase je izbor napravljen
+za potrebe ove vežbe; u realnoj primeni bi verovatno bio prilagođen
+poslovnom kontekstu (npr. po gradu posebno, s obzirom na to koliko se
+tržišta gradova razlikuju). Takođe, model je treniran na podacima iz 2022.
+godine za šest konkretnih gradova, pa se rezultati ne mogu generalizovati
+van tog konteksta bez ponovnog treniranja.
