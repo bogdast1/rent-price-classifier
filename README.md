@@ -53,7 +53,8 @@ rent-price-classifier/
 ├── analysis.Rmd          # glavni izveštaj sa punim narativom
 ├── analysis.html         # renderovan izveštaj (otvoriti direktno u browseru)
 ├── data/
-│   └── rent.csv
+│   ├── README.md          # uputstvo za preuzimanje dataset-a
+│   └── rent.csv           # (nije u repo-u, vidi data/README.md)
 ├── R/
 │   ├── utils.R            # get_evaluation_metrics(), quantile_discretize_df()
 │   ├── 01_data_cleaning.R # load_and_clean_rent_data()
@@ -63,6 +64,11 @@ rent-price-classifier/
 ```
 
 ## Pokretanje
+
+1. Preuzmi `rent.csv` sa [Kaggle-a](https://www.kaggle.com/datasets/iamsouravbanerjee/house-rent-prediction-dataset)
+   i sačuvaj ga kao `data/rent.csv` (dataset nije uključen u repo — vidi
+   [`data/README.md`](data/README.md)).
+2. Instaliraj pakete i renderuj izveštaj:
 
 ```r
 install.packages(c("ggplot2", "e1071", "caret", "pROC", "here",
