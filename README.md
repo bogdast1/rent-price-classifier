@@ -65,10 +65,10 @@ rent-price-classifier/
 
 ## Pokretanje
 
-1. Preuzmi `rent.csv` sa [Kaggle-a](https://www.kaggle.com/datasets/iamsouravbanerjee/house-rent-prediction-dataset)
-   i sačuvaj ga kao `data/rent.csv` (dataset nije uključen u repo — vidi
+1. Dataset (`rent.csv`) se preuzima sa [Kaggle-a](https://www.kaggle.com/datasets/iamsouravbanerjee/house-rent-prediction-dataset)
+   i čuva kao `data/rent.csv` (nije uključen u repo — vidi
    [`data/README.md`](data/README.md)).
-2. Instaliraj pakete i renderuj izveštaj:
+2. Instalacija paketa i renderovanje izveštaja:
 
 ```r
 install.packages(c("ggplot2", "e1071", "caret", "pROC", "here",
