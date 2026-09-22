@@ -1,0 +1,13 @@
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+.DS_Store
+*.html
+!analysis.html
+renv/
+renv.lock
+
+# Sirovi dataset se ne cuva u repo-u (Kaggle licenca nije potvrdjena) -
+# vidi data/README.md za uputstvo za preuzimanje
+data/rent.csv
